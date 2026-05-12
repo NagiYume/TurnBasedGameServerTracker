@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSR 服务器状态监控</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #30363d;
+            margin-bottom: 20px;
+        }
+        header h1 { font-size: 24px; color: #58a6ff; }
+        header p { font-size: 13px; color: #8b949e; margin-top: 6px; }
+
+        .settings {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .settings-header {
+            padding: 14px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        .settings-header:hover { background: #1c2129; }
+        .settings-header h2 { font-size: 15px; color: #8b949e; }
+        .settings-header .arrow { transition: transform 0.2s; color: #484f58; }
+        .settings-header .arrow.open { transform: rotate(180deg); }
+        .settings-body {
+            padding: 0 20px 20px;
+            display: none;
+        }
+        .settings-body.open { display: block; }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 12px; color: #8b949e; }
+        .form-group input {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: #c9d1d9;
+            font-size: 14px;
+            transition: border-color 0.15s;
+        }
+        .form-group input:focus { outline: none; border-color: #58a6ff; }
+        .form-group input::placeholder { color: #484f58; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn {
+            padding: 8px 20px;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #21262d;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: #30363d; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: #238636; border-color: #238636; color: #fff; }
+        .btn-primary:hover:not(:disabled) { background: #2ea043; }
+        .btn-danger { background: #b62324; border-color: #b62324; color: #fff; }
+        .btn-danger:hover:not(:disabled) { background: #da3633; }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 12px 18px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .status-left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+        .status-indicator { display: inline-flex; align-items: center; gap: 6px; }
+        .dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            display: inline-block; flex-shrink: 0;
+        }
+        .dot.green { background: #3fb950; box-shadow: 0 0 6px #3fb95088; }
+        .dot.blue  { background: #58a6ff; box-shadow: 0 0 6px #58a6ff88; animation: pulse 1s infinite; }
+        .dot.gray  { background: #484f58; }
+        .dot.yellow { background: #d29922; box-shadow: 0 0 6px #d2992288; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        .proxy-tag {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+        }
+        .proxy-tag.ok { border-color: #3fb95066; color: #3fb950; }
+        .proxy-tag.fail { border-color: #f8514966; color: #f85149; }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            position: relative;
+        }
+        .card.active  { border-left: 4px solid #3fb950; }
+        .card.closed  { border-left: 4px solid #f85149; }
+        .card.invalid { border-left: 4px solid #d29922; }
+        .card.error   { border-left: 4px solid #484f58; }
+        .card.flash {
+            animation: cardFlash 0.6s ease-out;
+        }
+        @keyframes cardFlash {
+            0%   { box-shadow: 0 0 0 0 rgba(88,166,255,0.6); }
+            50%  { box-shadow: 0 0 16px 4px rgba(88,166,255,0.3); }
+            100% { box-shadow: 0 0 0 0 rgba(88,166,255,0); }
+        }
+        .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .card-ver { font-size: 20px; font-weight: 700; font-family: 'Consolas','Courier New',monospace; }
+        .badge {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .badge-active  { background: #3fb950; color: #000; }
+        .badge-closed  { background: #f85149; color: #fff; }
+        .badge-invalid { background: #d29922; color: #000; }
+        .badge-error   { background: #484f58; color: #c9d1d9; }
+        .card-servers { font-size: 13px; margin-top: 8px; }
+        .card-servers .srv {
+            display: flex; align-items: center; gap: 6px;
+            padding: 3px 0; color: #8b949e;
+        }
+        .card-servers .srv .srv-dot { width: 6px; height: 6px; border-radius: 50%; background: #3fb950; flex-shrink: 0; }
+        .card-msg { font-size: 13px; color: #8b949e; margin-top: 6px; }
+        .card-time { font-size: 11px; color: #484f58; margin-top: 10px; }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #484f58;
+            font-size: 15px;
+        }
+
+        .log {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .log-head {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px;
+        }
+        .log-head h3 { font-size: 14px; color: #8b949e; }
+        .log-body {
+            max-height: 260px;
+            overflow-y: auto;
+            font-family: 'Consolas','Courier New',monospace;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+        .log-body::-webkit-scrollbar { width: 6px; }
+        .log-body::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+        .le { color: #6e7681; }
+        .le .t { color: #484f58; margin-right: 6px; }
+        .le.ok   { color: #3fb950; }
+        .le.warn { color: #d29922; }
+        .le.err  { color: #f85149; }
+        .le.chg  { color: #f0883e; }
+        .le.info { color: #58a6ff; }
+
+        @media (max-width: 600px) {
+            .cards { grid-template-columns: 1fr; }
+            .settings-grid { grid-template-columns: 1fr; }
+            .status-bar { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>HSR 服务器状态监控</h1>
+        <p>Honkai: Star Rail Beta Dispatch Monitor &mdash; A.B.5C (B=0~8, C=0~5)</p>
+    </header>
+
+    <div class="settings">
+        <div class="settings-header" onclick="toggleSettings()">
+            <h2>设置</h2>
+            <span class="arrow" id="settingsArrow">&#9660;</span>
+        </div>
+        <div class="settings-body" id="settingsBody">
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>起始版本</label>
+                    <input type="text" id="inpStart" value="4.0.50" placeholder="如 4.0.50">
+                </div>
+                <div class="form-group">
+                    <label>结束版本 (auto = 自动检测)</label>
+                    <input type="text" id="inpEnd" value="auto" placeholder="auto 或 4.8.55">
+                </div>
+                <div class="form-group">
+                    <label>轮询间隔 (秒)</label>
+                    <input type="number" id="inpInterval" value="5" min="1" max="600">
+                </div>
+                <div class="form-group">
+                    <label>连续 N/A 停止阈值</label>
+                    <input type="number" id="inpNaLimit" value="5" min="1" max="50">
+                </div>
+                <div class="form-group">
+                    <label>CORS 代理 (留空=自动检测, 也可手动指定)</label>
+                    <input type="text" id="inpProxy" value="" placeholder="留空自动, 或填如 https://corsproxy.io/?">
+                </div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btnStart" onclick="handleStart()">开始监控</button>
+                <button class="btn btn-danger" id="btnStop" onclick="handleStop()" disabled>停止</button>
+                <button class="btn" id="btnScan" onclick="handleScanOnce()">单次扫描</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <div class="status-left">
+            <div class="status-indicator">
+                <span class="dot gray" id="statusDot"></span>
+                <span id="statusText">就绪</span>
+            </div>
+            <span class="proxy-tag" id="proxyTag" style="display:none;"></span>
+            <span id="monitorInfo" style="color:#484f58;font-size:13px;"></span>
+        </div>
+        <div style="font-size:13px;">
+            上次查询: <span id="lastQuery" style="color:#8b949e;">-</span>
+        </div>
+    </div>
+
+    <div class="cards" id="cards">
+        <div class="empty-state" id="emptyState">点击「开始监控」或「单次扫描」以查看服务器状态</div>
+    </div>
+
+    <div class="log" style="margin-top:20px;">
+        <div class="log-head">
+            <h3>日志</h3>
+            <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="clearLog()">清空</button>
+        </div>
+        <div class="log-body" id="logBody"></div>
+    </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  Utilities
+// ════════════════════════════════════════════════════════════════
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const now = () => new Date();
+
+function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+}
+
+function bytesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Protobuf Wire-Format Decoder  (no .proto schema)
+// ════════════════════════════════════════════════════════════════
+
+function _rv(buf, pos) {
+    let val = 0, sh = 0;
+    while (pos < buf.length) {
+        const b = buf[pos++];
+        val |= (b & 0x7F) << sh;
+        if (!(b & 0x80)) return { v: val, p: pos };
+        sh += 7;
+    }
+    throw 0;
+}
+
+function _validMsg(buf) {
+    if (buf.length < 2) return 0;
+    let pos = 0;
+    while (pos < buf.length) {
+        try {
+            const { v: tag, p: p1 } = _rv(buf, pos);
+            pos = p1;
+            const fn = tag >> 3, wt = tag & 7;
+            if (fn < 1 || (wt !== 0 && wt !== 1 && wt !== 2 && wt !== 5)) return 0;
+            if (wt === 0)      { const r = _rv(buf, pos); pos = r.p; }
+            else if (wt === 1) { if (pos + 8 > buf.length) return 0; pos += 8; }
+            else if (wt === 2) { const r = _rv(buf, pos); pos = r.p; if (pos + r.v > buf.length) return 0; pos += r.v; }
+            else               { if (pos + 4 > buf.length) return 0; pos += 4; }
+        } catch { return 0; }
+    }
+    return pos;
+}
+
+function decodePB(buf) {
+    if (!buf || !buf.length) return {};
+    const out = {};
+    let pos = 0;
+    while (pos < buf.length) {
+        let tag, fn, wt;
+        try {
+            const r = _rv(buf, pos); tag = r.v; pos = r.p;
+            fn = tag >> 3; wt = tag & 7;
+            if (fn < 1 || (wt !== 0 && wt !== 1 && wt !== 2 && wt !== 5)) break;
+        } catch { break; }
+        let val;
+        try {
+            if (wt === 0) {
+                const r = _rv(buf, pos); val = r.v; pos = r.p;
+            } else if (wt === 1) {
+                val = buf.slice(pos, pos + 8); pos += 8;
+            } else if (wt === 2) {
+                const r = _rv(buf, pos); pos = r.p;
+                const raw = buf.slice(pos, pos + r.v); pos += r.v;
+                if (_validMsg(raw) === raw.length) {
+                    val = decodePB(raw);
+                } else {
+                    try { val = new TextDecoder().decode(raw); } catch { val = raw; }
+                }
+            } else {
+                val = buf.slice(pos, pos + 4); pos += 4;
+            }
+        } catch { break; }
+        if (fn in out) {
+            const prev = out[fn];
+            out[fn] = Array.isArray(prev) ? [...prev, val] : [prev, val];
+        } else {
+            out[fn] = val;
+        }
+    }
+    return out;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Response Classifier
+// ════════════════════════════════════════════════════════════════
+
+const S_ACTIVE  = 'active';
+const S_CLOSED  = 'closed';
+const S_INVALID = 'invalid';
+const S_ERROR   = 'error';
+
+function classify(raw) {
+    const d = decodePB(raw);
+    if (!d || !Object.keys(d).length) return [S_ERROR, { msg: '空响应' }];
+
+    if (d[4]) {
+        let svrs = d[4];
+        if (!Array.isArray(svrs)) svrs = [svrs];
+        if (svrs.every(s => typeof s === 'object' && s !== null && !ArrayBuffer.isView(s)))
+            return [S_ACTIVE, { servers: svrs }];
+    }
+
+    if (d[1] !== undefined && d[2] !== undefined) {
+        const code = d[1];
+        let msg = d[2];
+        if (msg instanceof Uint8Array) { try { msg = new TextDecoder().decode(msg); } catch { msg = String(msg); } }
+        if (code === 4) return [S_CLOSED,  { code, msg }];
+        if (code === 3) return [S_INVALID, { code, msg }];
+        return [S_ERROR, { code, msg }];
+    }
+    return [S_ERROR, { msg: '未知格式' }];
+}
+
+function statusLabel(s) {
+    return s === S_ACTIVE ? '在线' : s === S_CLOSED ? '关服' : s === S_INVALID ? '未开放' : '错误';
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Version Helpers
+// ════════════════════════════════════════════════════════════════
+
+function vStr(a, b, c) { return a + '.' + b + '.5' + c; }
+
+function vNext(a, b, c) {
+    c++; if (c > 5) { c = 0; b++; } if (b > 8) { b = 0; a++; }
+    return [a, b, c];
+}
+
+function vPrev(a, b, c) {
+    c--; if (c < 0) { c = 5; b--; } if (b < 0) { b = 8; a--; }
+    return a < 1 ? null : [a, b, c];
+}
+
+function parseV(s) {
+    const m = String(s).trim().match(/^(\d+)\.(\d+)\.5(\d)$/);
+    return m ? [+m[1], +m[2], +m[3]] : null;
+}
+
+function vGt(a1, b1, c1, a2, b2, c2) {
+    return a1 > a2 || (a1 === a2 && (b1 > b2 || (b1 === b2 && c1 > c2)));
+}
+
+// ════════════════════════════════════════════════════════════════
+//  HTTP Fetch with Auto CORS-Proxy Detection
+// ════════════════════════════════════════════════════════════════
+
+const API = 'https://globaldp-beta-cn01.bhsr.com/query_dispatch';
+
+let WORKER_URL = '';
+
+function buildProxyList() {
+    const list = [
+        { name: '直连',         fn: u => u },
+    ];
+    if (WORKER_URL) {
+        const base = WORKER_URL.replace(/\/+$/, '');
+        list.push({ name: '自建代理', fn: u => base + '?url=' + encodeURIComponent(u) });
+    }
+    list.push(
+        { name: 'corsproxy.io', fn: u => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+        { name: 'allorigins',   fn: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+        { name: 'cors.sh',      fn: u => 'https://cors.sh/' + u },
+    );
+    return list;
+}
+
+let PROXIES = buildProxyList();
+let cachedProxyIdx = -2;
+// -2 = not tested yet
+// -1 = direct works
+// 0+ = index into PROXIES
+// -3 = manual proxy specified
+
+function buildTargetUrl(ver) {
+    const p = new URLSearchParams({
+        version: 'CNBETAWin' + ver,
+        t: String(Math.floor(Date.now() / 1000)),
+        language_type: '1', platform_type: '3',
+        channel_id: '1', sub_channel_id: '1', is_new_format: '1'
+    });
+    return API + '?' + p.toString();
+}
+
+function updateProxyTag(name, ok) {
+    const tag = $('proxyTag');
+    tag.style.display = '';
+    tag.textContent = name;
+    tag.className = 'proxy-tag ' + (ok ? 'ok' : 'fail');
+}
+
+async function rawFetch(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    let text = await resp.text();
+    try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch {}
+    return base64ToBytes(text.trim());
+}
+
+async function fetchSmart(ver, manualProxy) {
+    const targetUrl = buildTargetUrl(ver);
+
+    if (manualProxy) {
+        const url = manualProxy.includes('{url}')
+            ? manualProxy.replace('{url}', encodeURIComponent(targetUrl))
+            : manualProxy + targetUrl;
+        try {
+            const r = await rawFetch(url);
+            updateProxyTag('手动: ' + manualProxy.slice(0, 30) + '…', true);
+            return r;
+        } catch (e) {
+            updateProxyTag('手动代理失败', false);
+            throw e;
+        }
+    }
+
+    if (cachedProxyIdx === -2) {
+        addLog('正在检测可用连接…', 'info');
+    }
+
+    if (cachedProxyIdx >= -1) {
+        const idx = cachedProxyIdx;
+        try {
+            const url = idx === -1 ? targetUrl : PROXIES[idx].fn(targetUrl);
+            const r = await rawFetch(url);
+            const name = idx === -1 ? '直连' : PROXIES[idx].name;
+            updateProxyTag(name, true);
+            return r;
+        } catch {
+            cachedProxyIdx = -2;
+        }
+    }
+
+    for (let i = 0; i < PROXIES.length; i++) {
+        try {
+            const r = await rawFetch(PROXIES[i].fn(targetUrl));
+            cachedProxyIdx = i === 0 ? -1 : i;
+            addLog('连接成功: ' + PROXIES[i].name, 'ok');
+            updateProxyTag(PROXIES[i].name, true);
+            return r;
+        } catch {
+            addLog(PROXIES[i].name + ' 失败，尝试下一个…', 'warn');
+        }
+    }
+
+    updateProxyTag('全部失败', false);
+    throw new Error('所有连接方式均失败，请检查网络或手动配置 CORS 代理');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Application State
+// ════════════════════════════════════════════════════════════════
+
+const state = {
+    versions: {},
+    monitorKeys: [],
+    lastActive: null,
+    running: false,
+    scanning: false,
+    timer: null,
+    lastQuery: null,
+};
+
+// ════════════════════════════════════════════════════════════════
+//  UI Helpers
+// ════════════════════════════════════════════════════════════════
+
+function $(id) { return document.getElementById(id); }
+
+function setDot(color) { $('statusDot').className = 'dot ' + color; }
+function setStatusText(txt) { $('statusText').textContent = txt; }
+function setMonitorInfo(txt) { $('monitorInfo').textContent = txt; }
+function setLastQuery(t) { $('lastQuery').textContent = t || '-'; }
+
+function addLog(msg, cls) {
+    const body = $('logBody');
+    const div = document.createElement('div');
+    div.className = 'le' + (cls ? ' ' + cls : '');
+    const ts = now().toLocaleTimeString('zh-CN', { hour12: false });
+    div.innerHTML = '<span class="t">[' + ts + ']</span>' + esc(msg);
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+}
+
+function clearLog() { $('logBody').innerHTML = ''; }
+
+function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function toggleSettings() {
+    $('settingsBody').classList.toggle('open');
+    $('settingsArrow').classList.toggle('open');
+}
+
+// ── Card rendering ──
+
+function clearEmpty() {
+    const e = $('emptyState');
+    if (e) e.remove();
+}
+
+function renderCard(ver) {
+    clearEmpty();
+    const d = state.versions[ver];
+    if (!d) return;
+    let card = $('c-' + ver);
+    const isNew = !card;
+    if (isNew) {
+        card = document.createElement('div');
+        card.id = 'c-' + ver;
+    }
+
+    card.className = 'card ' + d.status;
+
+    let inner = '<div class="card-head">'
+        + '<span class="card-ver">' + esc(ver) + '</span>'
+        + '<span class="badge badge-' + d.status + '">' + statusLabel(d.status) + '</span>'
+        + '</div>';
+
+    if (d.status === S_ACTIVE && d.detail.servers) {
+        inner += '<div class="card-servers">';
+        for (const s of d.detail.servers) {
+            const name = s[5] || '?';
+            const url = s[3] || '';
+            inner += '<div class="srv"><span class="srv-dot"></span>'
+                + '<span>' + esc(String(name)) + '</span>'
+                + '<span style="color:#484f58;font-size:11px;margin-left:auto;">' + esc(String(url)) + '</span>'
+                + '</div>';
+        }
+        inner += '</div>';
+    } else if (d.detail.msg) {
+        inner += '<div class="card-msg">' + esc(String(d.detail.msg)) + '</div>';
+    }
+
+    inner += '<div class="card-time">查询: ' + d.time.toLocaleString('zh-CN', { hour12: false }) + '</div>';
+    card.innerHTML = inner;
+
+    if (isNew) insertSorted(card, ver);
+    card.classList.remove('flash');
+    void card.offsetWidth;
+    card.classList.add('flash');
+}
+
+function insertSorted(card, ver) {
+    const container = $('cards');
+    for (const c of container.querySelectorAll('.card')) {
+        if (ver < c.id.replace('c-', '')) { container.insertBefore(card, c); return; }
+    }
+    container.appendChild(card);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Scan & Monitor Logic
+// ════════════════════════════════════════════════════════════════
+
+function getSettings() {
+    const sv = parseV($('inpStart').value);
+    if (!sv) { addLog('起始版本格式错误，应如 4.0.50', 'err'); return null; }
+    const evStr = $('inpEnd').value.trim().toLowerCase();
+    const ev = (!evStr || evStr === 'auto') ? null : parseV(evStr);
+    if (evStr && evStr !== 'auto' && !ev) { addLog('结束版本格式错误', 'err'); return null; }
+    return {
+        sv, ev,
+        interval: Math.max(1, parseInt($('inpInterval').value) || 5),
+        naLimit:  Math.max(1, parseInt($('inpNaLimit').value) || 5),
+        proxy:    $('inpProxy').value.trim(),
+    };
+}
+
+async function doScan(cfg) {
+    let [a, b, c] = cfg.sv;
+    let naStreak = 0;
+    const autoEnd = !cfg.ev;
+
+    state.scanning = true;
+    setDot('blue');
+    setStatusText('扫描中…');
+
+    while (state.scanning) {
+        const ver = vStr(a, b, c);
+        if (cfg.ev && vGt(a, b, c, cfg.ev[0], cfg.ev[1], cfg.ev[2])) break;
+
+        addLog('扫描 ' + ver + ' …', 'info');
+        try {
+            const raw = await fetchSmart(ver, cfg.proxy);
+            const [st, det] = classify(raw);
+            state.versions[ver] = { status: st, detail: det, raw, time: now() };
+            renderCard(ver);
+
+            if (st === S_ACTIVE) {
+                addLog(ver + ': 在线  ✓', 'ok');
+                state.lastActive = ver;
+                naStreak = 0;
+            } else if (st === S_CLOSED) {
+                addLog(ver + ': 关服', 'warn');
+                naStreak = 0;
+            } else if (st === S_INVALID) {
+                addLog(ver + ': 未开放');
+                naStreak++;
+                if (autoEnd && naStreak >= cfg.naLimit && state.lastActive) {
+                    addLog('连续 ' + naStreak + ' 个未开放，停止扫描', 'warn');
+                    break;
+                }
+            } else {
+                addLog(ver + ': 错误 - ' + (det.msg || ''), 'err');
+                naStreak = 0;
+            }
+        } catch (e) {
+            addLog(ver + ': ' + e.message, 'err');
+            naStreak++;
+            if (autoEnd && naStreak >= cfg.naLimit && state.lastActive) {
+                addLog('连续 ' + naStreak + ' 次失败，停止扫描', 'err');
+                break;
+            }
+        }
+
+        [a, b, c] = vNext(a, b, c);
+        await sleep(300);
+    }
+
+    state.scanning = false;
+    state.lastQuery = now();
+    setLastQuery(state.lastQuery.toLocaleString('zh-CN', { hour12: false }));
+    return state.lastActive;
+}
+
+function setupMonitor() {
+    state.monitorKeys = [];
+    if (!state.lastActive) {
+        setMonitorInfo('未找到在线服务器');
+        return;
+    }
+    const v = parseV(state.lastActive);
+    if (!v) return;
+    const keys = [state.lastActive];
+    const pv = vPrev(...v);
+    if (pv) keys.push(vStr(...pv));
+    const nv = vNext(...v);
+    keys.push(vStr(...nv));
+    state.monitorKeys = keys;
+    setMonitorInfo('监控: ' + keys.join('  '));
+    addLog('监控目标: ' + keys.join(', '), 'ok');
+}
+
+async function pollCycle(cfg) {
+    for (const ver of state.monitorKeys) {
+        if (!state.running) return;
+        try {
+            const raw = await fetchSmart(ver, cfg.proxy);
+            const [st, det] = classify(raw);
+            const old = state.versions[ver];
+
+            if (old && !bytesEqual(raw, old.raw)) {
+                addLog('⚡ ' + ver + ' 变化: ' + statusLabel(old.status) + ' → ' + statusLabel(st), 'chg');
+            }
+
+            state.versions[ver] = { status: st, detail: det, raw, time: now() };
+            renderCard(ver);
+
+            if (st === S_ACTIVE && (!state.lastActive || ver > state.lastActive)) {
+                state.lastActive = ver;
+                setupMonitor();
+            }
+        } catch (e) {
+            addLog(ver + ': ' + e.message, 'err');
+        }
+        await sleep(250);
+    }
+    state.lastQuery = now();
+    setLastQuery(state.lastQuery.toLocaleString('zh-CN', { hour12: false }));
+}
+
+function schedulePoll(cfg) {
+    if (!state.running) return;
+    state.timer = setTimeout(async () => {
+        if (!state.running) return;
+        await pollCycle(cfg);
+        schedulePoll(cfg);
+    }, cfg.interval * 1000);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Button Handlers
+// ════════════════════════════════════════════════════════════════
+
+function setBtnState(running) {
+    $('btnStart').disabled = running;
+    $('btnStop').disabled = !running;
+    $('btnScan').disabled = running;
+}
+
+async function handleStart() {
+    if (state.running) return;
+    const cfg = getSettings();
+    if (!cfg) return;
+
+    state.running = true;
+    state.lastActive = null;
+    state.monitorKeys = [];
+    $('cards').innerHTML = '';
+    setBtnState(true);
+    setDot('blue');
+    setStatusText('扫描中…');
+    setMonitorInfo('');
+    addLog('开始监控', 'ok');
+
+    await doScan(cfg);
+    if (!state.running) return;
+
+    if (state.lastActive) {
+        setupMonitor();
+        setDot('green');
+        setStatusText('监控中');
+    } else {
+        setDot('gray');
+        setStatusText('未找到在线服务器');
+    }
+    schedulePoll(cfg);
+}
+
+function handleStop() {
+    state.running = false;
+    state.scanning = false;
+    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+    setBtnState(false);
+    setDot('gray');
+    setStatusText('已停止');
+    setMonitorInfo('');
+    addLog('监控已停止', 'warn');
+}
+
+async function handleScanOnce() {
+    if (state.running || state.scanning) return;
+    const cfg = getSettings();
+    if (!cfg) return;
+    $('cards').innerHTML = '';
+    state.lastActive = null;
+    setBtnState(true);
+    addLog('单次扫描', 'info');
+
+    await doScan(cfg);
+    setupMonitor();
+
+    setBtnState(false);
+    setDot('gray');
+    setStatusText('扫描完成');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  URL Params
+// ════════════════════════════════════════════════════════════════
+
+function loadFromUrl() {
+    const p = new URLSearchParams(location.search);
+    if (p.has('start'))    $('inpStart').value    = p.get('start');
+    if (p.has('end'))      $('inpEnd').value       = p.get('end');
+    if (p.has('interval')) $('inpInterval').value  = p.get('interval');
+    if (p.has('na'))       $('inpNaLimit').value   = p.get('na');
+    if (p.has('proxy'))    $('inpProxy').value     = p.get('proxy');
+    if (p.has('worker')) {
+        WORKER_URL = p.get('worker');
+        PROXIES = buildProxyList();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Init
+// ════════════════════════════════════════════════════════════════
+
+window.addEventListener('DOMContentLoaded', () => {
+    loadFromUrl();
+    toggleSettings();
+    handleStart();
+});
+</script>
+</body>
+</html>
